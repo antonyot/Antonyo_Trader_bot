@@ -1,8 +1,9 @@
 import os
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+import requests
+import time
 
 TOKEN = os.environ.get("TOKEN")
+API = f"https://api.telegram.org/bot{TOKEN}"
 
 CHECKLIST = """📋 *Checklist Trading — Swing*
 
@@ -22,8 +23,8 @@ Avant d'entrer en position, valide chaque point :
 ☐ Pas d'événement macro majeur imminent
 
 *🛡️ Gestion du risque*
-☐ Mon stop-loss est à un niveau logique
-☐ Je risque max 1-2% de mon capital sur ce trade
+☐ Mon stop\-loss est à un niveau logique
+☐ Je risque max 1\-2% de mon capital sur ce trade
 ☐ Mon ratio risque/rendement est d'au moins 2:1
 ☐ La taille de position est calculée en fonction du stop
 ☐ Pas de trades corrélés ouverts qui amplifient le risque
@@ -35,19 +36,33 @@ Avant d'entrer en position, valide chaque point :
 ☐ J'accepte d'avance la possibilité de perdre
 ☐ Je peux laisser tourner le trade sans surveiller en permanence
 
-✅ *Tous les critères cochés ? Tu peux entrer.*
-⚠️ *Un critère manquant ? Reconsidère le trade.*"""
+✅ *Tous les critères cochés ? Tu peux entrer\.*
+⚠️ *Un critère manquant ? Reconsidère le trade\.*"""
 
-async def send_checklist(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(CHECKLIST, parse_mode="Markdown")
+def send_message(chat_id, text):
+    requests.post(f"{API}/sendMessage", json={
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "MarkdownV2"
+    })
+
+def get_updates(offset=None):
+    params = {"timeout": 30, "offset": offset}
+    r = requests.get(f"{API}/getUpdates", params=params, timeout=35)
+    return r.json().get("result", [])
 
 def main():
-    app = ApplicationBuilder().token(TOKEN).build()
-    app.add_handler(CommandHandler("checklist", send_checklist))
-    app.add_handler(CommandHandler("start", send_checklist))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, send_checklist))
     print("Bot démarré...")
-    app.run_polling()
+    offset = None
+    while True:
+        updates = get_updates(offset)
+        for update in updates:
+            offset = update["update_id"] + 1
+            message = update.get("message", {})
+            chat_id = message.get("chat", {}).get("id")
+            if chat_id:
+                send_message(chat_id, CHECKLIST)
+        time.sleep(1)
 
 if __name__ == "__main__":
     main()
