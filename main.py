@@ -23,8 +23,8 @@ Avant d'entrer en position, valide chaque point :
 ☐ Pas d'événement macro majeur imminent
 
 *🛡️ Gestion du risque*
-☐ Mon stop\-loss est à un niveau logique
-☐ Je risque max 1\-2% de mon capital sur ce trade
+☐ Mon stop-loss est à un niveau logique
+☐ Je risque max 1-2% de mon capital sur ce trade
 ☐ Mon ratio risque/rendement est d'au moins 2:1
 ☐ La taille de position est calculée en fonction du stop
 ☐ Pas de trades corrélés ouverts qui amplifient le risque
@@ -36,8 +36,8 @@ Avant d'entrer en position, valide chaque point :
 ☐ J'accepte d'avance la possibilité de perdre
 ☐ Je peux laisser tourner le trade sans surveiller en permanence
 
-✅ *Tous les critères cochés ? Tu peux entrer\.*
-⚠️ *Un critère manquant ? Reconsidère le trade\.*"""
+✅ *Tous les critères cochés ? Tu peux entrer.*
+⚠️ *Un critère manquant ? Reconsidère le trade.*"""
 
 def send_message(chat_id, text):
     requests.post(f"{API}/sendMessage", json={
