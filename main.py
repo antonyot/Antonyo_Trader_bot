@@ -6,7 +6,7 @@ import urllib.request
 TOKEN = os.environ.get("TOKEN")
 API = f"https://api.telegram.org/bot{TOKEN}"
 SHEETS_CHECKLIST = "https://script.google.com/macros/s/AKfycbxq3dgto7MHKgijoF1rQP35cbXE0EitKORqfzfMK04sBrurw9lSNOQvFpKuAwK8GDYl/exec"
-SHEETS_LOG = "https://script.google.com/macros/s/AKfycbxz0VeXYcIT4cqiZROrkvy5SWgCO2kYeOGTwYfC4ga6ZpZXDIWtKvlSO16Tes8YwAPg/exec"
+SHEETS_LOG = "https://script.google.com/macros/s/AKfycby-virBrxLO66gNIP1c4sXcEO95aC1zSaUPnZ_oZGHf_r0nPR-2EIb9ok8NDb4TkMgc/exec"
 
 CHECKLIST_ITEMS = [
     "Setup definie dans mon plan",
@@ -36,6 +36,7 @@ JOURS = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"
 
 sessions = {}
 historique = []
+capital_actuel = {}
 
 def send_message(chat_id, text):
     data = json.dumps({"chat_id": chat_id, "text": text}).encode()
@@ -104,9 +105,14 @@ def afficher_score(chat_id):
     send_message(chat_id, msg)
 
 def demander_donnees_trade(chat_id):
-    sessions[chat_id]["etape"] = "symbol"
     sessions[chat_id]["trade"] = {}
-    send_message(chat_id, "Quel symbole ? (ex: GBPUSD, XAUUSD, BTCUSDT)")
+    if chat_id in capital_actuel:
+        sessions[chat_id]["trade"]["capital"] = capital_actuel[chat_id]
+        sessions[chat_id]["etape"] = "symbol"
+        send_message(chat_id, f"Capital actuel : {capital_actuel[chat_id]}$ (mis a jour automatiquement)\n\nQuel symbole ? (ex: GBPUSD, XAUUSD)")
+    else:
+        sessions[chat_id]["etape"] = "capital_init"
+        send_message(chat_id, "Premier trade — quel est ton capital de depart ? (ex: 6000)")
 
 def finaliser_entree(chat_id):
     session = sessions[chat_id]
@@ -136,10 +142,8 @@ def finaliser_entree(chat_id):
     row_number = resp.get("row", "?")
     session["trade"]["row"] = row_number
 
-    payload_checklist = {
-        "date": date,
-        "heure": heure,
-        "jour": jour,
+    envoyer_vers_sheets(SHEETS_CHECKLIST, {
+        "date": date, "heure": heure, "jour": jour,
         "actif": trade.get("symbol"),
         "marche": trade.get("market"),
         "direction": trade.get("direction"),
@@ -152,8 +156,7 @@ def finaliser_entree(chat_id):
         "rr": "N/A",
         "score": session["score"],
         "tradePris": "Oui"
-    }
-    envoyer_vers_sheets(SHEETS_CHECKLIST, payload_checklist)
+    })
 
     historique.append({
         "date": date, "heure": heure, "jour": jour,
@@ -164,12 +167,12 @@ def finaliser_entree(chat_id):
     entree = float(trade.get("entryPrice", 0))
     sl = float(trade.get("stopLoss", 0))
     target = float(trade.get("target", 0))
-    diff_sl = abs(entree - sl)
-    rr = round(abs(target - entree) / diff_sl, 1) if diff_sl > 0 else 0
     capital = float(trade.get("capital", 0))
     pct = float(trade.get("pctRisque", 0))
+    diff_sl = abs(entree - sl)
     montant = round(capital * pct / 100, 2)
     quantity = round(montant / diff_sl, 2) if diff_sl > 0 else 0
+    rr = round(abs(target - entree) / diff_sl, 1) if diff_sl > 0 else 0
 
     msg = f"Trade enregistre dans ton journal !\n\n"
     msg += f"Date : {date} {heure} ({jour})\n"
@@ -179,7 +182,7 @@ def finaliser_entree(chat_id):
     msg += f"Stop-Loss : {sl}\n"
     msg += f"Target : {target}\n"
     msg += f"R/R : 1:{rr}\n"
-    msg += f"Quantite calculee : {quantity}\n"
+    msg += f"Quantite : {quantity}\n"
     msg += f"Montant risque : {montant}$ ({pct}%)\n"
     msg += f"Score checklist : {session['score']}%\n\n"
     msg += f"Tape 'cloturer {row_number}' quand tu fermes ce trade"
@@ -209,8 +212,18 @@ def enregistrer_sortie(chat_id):
         "fees": exit_data.get("fees", 0)
     }
 
-    envoyer_vers_sheets(SHEETS_LOG, payload)
-    send_message(chat_id, f"Trade #{session['row']} cloture et mis a jour dans ton journal !")
+    resp = envoyer_vers_sheets(SHEETS_LOG, payload)
+    pnl = float(resp.get("pnl", 0))
+    ancien_capital = capital_actuel.get(chat_id, 0)
+    nouveau_capital = round(ancien_capital + pnl, 2)
+    capital_actuel[chat_id] = nouveau_capital
+
+    msg = f"Trade #{session['row']} cloture !\n\n"
+    msg += f"P&L : {'+' if pnl >= 0 else ''}{pnl}$\n"
+    msg += f"Ancien capital : {ancien_capital}$\n"
+    msg += f"Nouveau capital : {nouveau_capital}$"
+
+    send_message(chat_id, msg)
     del sessions[chat_id]
 
 def envoyer_historique(chat_id):
@@ -239,6 +252,12 @@ def handle_message(chat_id, text):
         envoyer_historique(chat_id)
         return
 
+    if text_lower in ["reset_capital", "/reset_capital"]:
+        if chat_id in capital_actuel:
+            del capital_actuel[chat_id]
+        send_message(chat_id, "Capital remis a zero. Le prochain trade te demandera ton nouveau capital de depart.")
+        return
+
     if text_lower.startswith("cloturer "):
         parts = text_lower.split(" ")
         if len(parts) == 2 and parts[1].isdigit():
@@ -246,7 +265,7 @@ def handle_message(chat_id, text):
             return
 
     if not session:
-        send_message(chat_id, "Commandes disponibles :\n- checklist : lancer la checklist\n- historique : voir les sessions\n- cloturer [numero] : cloturer un trade ouvert")
+        send_message(chat_id, "Commandes disponibles :\n- checklist : lancer la checklist\n- historique : voir les sessions\n- cloturer [numero] : cloturer un trade\n- reset_capital : remettre le capital a zero")
         return
 
     etape = session.get("etape")
@@ -271,11 +290,26 @@ def handle_message(chat_id, text):
                 "entree": 0, "sl": 0, "tp": 0, "rr": "N/A",
                 "score": session["score"], "tradePris": "Non"
             })
-            historique.append({"date": time.strftime("%d/%m/%Y", t), "heure": time.strftime("%H:%M", t), "jour": JOURS[t.tm_wday], "score": session["score"], "trade_pris": False, "actif": "N/A"})
-            send_message(chat_id, f"Session enregistree. Score checklist : {session['score']}%\nTrade non pris.")
+            historique.append({
+                "date": time.strftime("%d/%m/%Y", t),
+                "heure": time.strftime("%H:%M", t),
+                "jour": JOURS[t.tm_wday],
+                "score": session["score"], "trade_pris": False, "actif": "N/A"
+            })
+            send_message(chat_id, f"Session enregistree. Score : {session['score']}%\nTrade non pris.")
             del sessions[chat_id]
         else:
             send_message(chat_id, "Reponds par oui ou non")
+
+    elif etape == "capital_init":
+        try:
+            val = float(text.replace(",", "."))
+            capital_actuel[chat_id] = val
+            session["trade"]["capital"] = val
+            session["etape"] = "symbol"
+            send_message(chat_id, f"Capital enregistre : {val}$\n\nQuel symbole ? (ex: GBPUSD, XAUUSD)")
+        except:
+            send_message(chat_id, "Entre un nombre valide (ex: 6000)")
 
     elif etape == "symbol":
         session["trade"]["symbol"] = text.upper()
@@ -299,16 +333,8 @@ def handle_message(chat_id, text):
         else:
             send_message(chat_id, "Reponds par 1 ou 2")
             return
-        session["etape"] = "capital"
-        send_message(chat_id, "Capital actuel ? (ex: 6000)")
-
-    elif etape == "capital":
-        try:
-            session["trade"]["capital"] = float(text.replace(",", "."))
-            session["etape"] = "pct_risque"
-            send_message(chat_id, "% du capital risque ? (ex: 1.5)")
-        except:
-            send_message(chat_id, "Entre un nombre valide (ex: 6000)")
+        session["etape"] = "pct_risque"
+        send_message(chat_id, "% du capital risque ? (ex: 1.5)")
 
     elif etape == "pct_risque":
         try:
