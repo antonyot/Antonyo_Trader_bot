@@ -39,9 +39,12 @@ historique = []
 capital_actuel = {}
 
 def send_message(chat_id, text):
-    data = json.dumps({"chat_id": chat_id, "text": text}).encode()
-    req = urllib.request.Request(f"{API}/sendMessage", data=data, headers={"Content-Type": "application/json"})
-    urllib.request.urlopen(req)
+    try:
+        data = json.dumps({"chat_id": chat_id, "text": text}).encode()
+        req = urllib.request.Request(f"{API}/sendMessage", data=data, headers={"Content-Type": "application/json"})
+        urllib.request.urlopen(req)
+    except Exception as e:
+        print(f"Erreur envoi message: {e}")
 
 def get_updates(offset=None):
     url = f"{API}/getUpdates?timeout=30"
@@ -188,7 +191,8 @@ def finaliser_entree(chat_id):
     msg += f"Tape 'cloturer {row_number}' quand tu fermes ce trade"
 
     send_message(chat_id, msg)
-    session["etape"] = "termine"
+    # Modification ici pour éviter le blocage
+    session["etape"] = "en_attente_cloture"
 
 def cloturer_trade(chat_id, row_number):
     sessions[chat_id] = {
@@ -224,7 +228,8 @@ def enregistrer_sortie(chat_id):
     msg += f"Nouveau capital : {nouveau_capital}$"
 
     send_message(chat_id, msg)
-    del sessions[chat_id]
+    if chat_id in sessions:
+        del sessions[chat_id]
 
 def envoyer_historique(chat_id):
     if not historique:
@@ -235,7 +240,7 @@ def envoyer_historique(chat_id):
         trade_info = f" - {h['actif']}" if h.get('trade_pris') else ""
         msg += f"{h['date']} ({h['jour']}){trade_info} - Score: {h['score']}% - Trade: {'Oui' if h['trade_pris'] else 'Non'}\n"
     total = len(historique)
-    moyenne = round(sum(h['score'] for h in historique) / total)
+    moyenne = round(sum(h['score'] for h in historique) / total) if total > 0 else 0
     trades_pris = sum(1 for h in historique if h['trade_pris'])
     msg += f"\nTotal sessions : {total}\nTrades pris : {trades_pris}\nScore moyen : {moyenne}%"
     send_message(chat_id, msg)
@@ -244,6 +249,7 @@ def handle_message(chat_id, text):
     text_lower = text.lower().strip()
     session = sessions.get(chat_id)
 
+    # Commandes globales prioritaires
     if text_lower in ["checklist", "/checklist", "/start", "start"]:
         envoyer_checklist(chat_id)
         return
@@ -400,18 +406,22 @@ def handle_message(chat_id, text):
 
     elif etape == "exit_price":
         try:
-            session["exit"]["exitPrice"] = float(text.replace(",", "."))
+            # Nettoyage pour accepter uniquement chiffres et points
+            clean_val = "".join(c for c in text if c.isdigit() or c in ".,")
+            session["exit"]["exitPrice"] = float(clean_val.replace(",", "."))
             session["etape"] = "fees"
             send_message(chat_id, "Frais (fees) ? (tape 0 si aucun)")
         except:
-            send_message(chat_id, "Entre un nombre valide")
+            send_message(chat_id, "Entre un prix de sortie valide (ex: 1.1234)")
 
     elif etape == "fees":
         try:
-            session["exit"]["fees"] = float(text.replace(",", "."))
+            # Nettoyage pour accepter uniquement chiffres et points
+            clean_val = "".join(c for c in text if c.isdigit() or c in ".,")
+            session["exit"]["fees"] = float(clean_val.replace(",", "."))
             enregistrer_sortie(chat_id)
         except:
-            send_message(chat_id, "Entre un nombre valide")
+            send_message(chat_id, "Entre un montant de frais valide (ex: 0 ou 1.5)")
 
 def main():
     print("Bot demarre...")
@@ -427,7 +437,7 @@ def main():
                 if chat_id and text:
                     handle_message(chat_id, text)
         except Exception as e:
-            print(f"Erreur: {e}")
+            print(f"Erreur boucle principale: {e}")
             time.sleep(5)
 
 if __name__ == "__main__":
